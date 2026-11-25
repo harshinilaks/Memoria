@@ -68,3 +68,5 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_memories_namespace"), table_name="memories")
     op.drop_index(op.f("ix_memories_agent_id"), table_name="memories")
     op.drop_table("memories")
+    sa.Enum(name="memorystatus").drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name="memorytype").drop(op.get_bind(), checkfirst=True)

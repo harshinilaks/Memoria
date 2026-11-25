@@ -1,25 +1,9 @@
-from fastapi import HTTPException, status
+class MemoriaError(Exception):
+    """Base class for domain errors raised by the service layer."""
 
 
-class MemoryNotFoundError(HTTPException):
-    def __init__(self, memory_id: str):
-        super().__init__(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Memory with id {memory_id} not found",
-        )
-
-
-class NamespaceConflictError(HTTPException):
-    def __init__(self, detail: str):
-        super().__init__(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=detail,
-        )
-
-
-class ValidationError(HTTPException):
-    def __init__(self, detail: str):
-        super().__init__(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=detail,
-        )
+class MemoryNotFoundError(MemoriaError):
+    def __init__(self, memory_id: str, namespace: str):
+        self.memory_id = memory_id
+        self.namespace = namespace
+        super().__init__(f"Memory with id {memory_id} not found in namespace '{namespace}'")
