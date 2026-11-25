@@ -4,16 +4,36 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from memoria.api.dependencies import get_namespace
-from memoria.api.schemas import MemoryCreate, MemoryListResponse, MemoryResponse, MemoryUpdate
+from memoria.api.schemas import (
+    MemoryCreate,
+    MemoryListResponse,
+    MemoryResponse,
+    MemorySearchRequest,
+    MemorySearchResponse,
+    MemorySearchResult,
+    MemoryUpdate,
+)
 from memoria.database.models import MemoryStatus, MemoryType
 from memoria.database.session import get_db
 from memoria.memory.service import MemoryService
+from memoria.retrieval.embeddings import EmbeddingProvider, get_embedding_provider
+from memoria.retrieval.retriever import MemoryRetriever, SearchFilters
 
 router = APIRouter(prefix="/memories", tags=["memories"])
 
 
-def get_memory_service(db: Session = Depends(get_db)) -> MemoryService:
-    return MemoryService(db)
+def get_memory_service(
+    db: Session = Depends(get_db),
+    embedder: EmbeddingProvider = Depends(get_embedding_provider),
+) -> MemoryService:
+    return MemoryService(db, embedder)
+
+
+def get_memory_retriever(
+    db: Session = Depends(get_db),
+    embedder: EmbeddingProvider = Depends(get_embedding_provider),
+) -> MemoryRetriever:
+    return MemoryRetriever(db, embedder)
 
 
 @router.post("", response_model=MemoryResponse, status_code=201)
@@ -23,6 +43,34 @@ def create_memory(
     service: MemoryService = Depends(get_memory_service),
 ) -> MemoryResponse:
     return MemoryResponse.model_validate(service.create(namespace, data))
+
+
+@router.post("/search", response_model=MemorySearchResponse)
+def search_memories(
+    request: MemorySearchRequest,
+    namespace: str = Depends(get_namespace),
+    retriever: MemoryRetriever = Depends(get_memory_retriever),
+) -> MemorySearchResponse:
+    """Rank memories by semantic similarity to `query`. Only active memories by default."""
+    results = retriever.search(
+        namespace,
+        request.query,
+        top_k=request.top_k,
+        min_score=request.min_score,
+        filters=SearchFilters(
+            repository_id=request.repository_id,
+            session_id=request.session_id,
+            memory_type=request.memory_type,
+            status=request.status,
+        ),
+    )
+    return MemorySearchResponse(
+        results=[
+            MemorySearchResult(memory=MemoryResponse.model_validate(memory), score=score)
+            for memory, score in results
+        ],
+        model=retriever.embedder.model_name,
+    )
 
 
 @router.get("/{memory_id}", response_model=MemoryResponse)

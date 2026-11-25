@@ -3,9 +3,14 @@ from enum import Enum as PyEnum
 from typing import Any, Optional
 from uuid import uuid4
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+# Must match the embedding provider's output size; changing it requires a migration.
+EMBEDDING_DIMENSIONS = 384
 
 
 def utc_now() -> datetime:
@@ -65,10 +70,41 @@ class Memory(Base):
     superseded_by: Mapped[Optional["Memory"]] = relationship(
         "Memory", remote_side=[id], backref="supersedes"
     )
+    embedding: Mapped[Optional["MemoryEmbedding"]] = relationship(
+        back_populates="memory", cascade="all, delete-orphan", uselist=False
+    )
 
     __table_args__ = (
         CheckConstraint("id != superseded_by_id", name="check_no_self_supersession"),
         Index("idx_namespace_status", "namespace", "status"),
         Index("idx_repository_session", "repository_id", "session_id"),
         Index("idx_agent_session", "agent_id", "session_id"),
+    )
+
+
+class MemoryEmbedding(Base):
+    """Embedding of a memory's content. One row per memory; `model` records which
+    provider produced it so rows from a previous model can be re-embedded."""
+
+    __tablename__ = "memory_embeddings"
+
+    memory_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("memories.id", ondelete="CASCADE"), primary_key=True
+    )
+    model: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIMENSIONS), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+
+    memory: Mapped[Memory] = relationship(back_populates="embedding")
+
+    __table_args__ = (
+        Index(
+            "idx_memory_embeddings_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
     )

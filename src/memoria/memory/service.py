@@ -7,6 +7,8 @@ from memoria.api.schemas import MemoryCreate, MemoryUpdate
 from memoria.core.exceptions import MemoryNotFoundError
 from memoria.database.models import Memory, MemoryStatus, MemoryType
 from memoria.memory.repository import MemoryRepository
+from memoria.retrieval.backfill import set_embedding
+from memoria.retrieval.embeddings import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -16,14 +18,20 @@ class MemoryService:
 
     Deletion policy: DELETE archives a memory (soft delete). Archived memories are
     hidden from get/update/delete and from list unless `status=archived` is requested.
+
+    Content is embedded synchronously on create and whenever it changes, in the same
+    transaction as the write, so a stored memory is always searchable.
     """
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, embedder: EmbeddingProvider):
         self.repository = MemoryRepository(db)
+        self.embedder = embedder
 
     def create(self, namespace: str, data: MemoryCreate) -> Memory:
         fields = data.model_dump(exclude={"metadata"})
-        memory = self.repository.create(namespace, metadata_=data.metadata, **fields)
+        memory = Memory(namespace=namespace, metadata_=data.metadata, **fields)
+        set_embedding(memory, self.embedder.model_name, self._embed(data.content))
+        memory = self.repository.add(memory)
         logger.info(
             "memory created",
             extra={"memory_id": memory.id, "namespace": namespace, "memory_type": memory.memory_type.value},
@@ -60,6 +68,8 @@ class MemoryService:
         changes = data.model_dump(exclude_unset=True)
         if "metadata" in changes:
             changes["metadata_"] = changes.pop("metadata")
+        if "content" in changes and changes["content"] != memory.content:
+            set_embedding(memory, self.embedder.model_name, self._embed(changes["content"]))
         memory = self.repository.update(memory, **changes)
         logger.info(
             "memory updated",
@@ -71,6 +81,9 @@ class MemoryService:
         memory = self.repository.archive(self._get_or_raise(memory_id, namespace))
         logger.info("memory archived", extra={"memory_id": memory.id, "namespace": namespace})
         return memory
+
+    def _embed(self, content: str) -> "list[float]":  # `list` is shadowed by the method
+        return self.embedder.embed_documents([content])[0]
 
     def _get_or_raise(self, memory_id: UUID, namespace: str) -> Memory:
         memory = self.repository.get_by_id(str(memory_id), namespace)

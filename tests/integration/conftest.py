@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from memoria.api.dependencies import get_namespace
 from memoria.database.session import get_db
 from memoria.main import app
+from memoria.retrieval.embeddings import HashingEmbeddingProvider, get_embedding_provider
 
 ROOT = Path(__file__).resolve().parents[2]
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
@@ -60,7 +61,7 @@ def engine() -> Generator[Engine, None, None]:
 @pytest.fixture()
 def db_session(engine: Engine) -> Generator[Session, None, None]:
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE memories"))
+        conn.execute(text("TRUNCATE memories CASCADE"))
     session = sessionmaker(bind=engine, autocommit=False, autoflush=False)()
     try:
         yield session
@@ -71,6 +72,7 @@ def db_session(engine: Engine) -> Generator[Session, None, None]:
 @pytest.fixture()
 def client(db_session: Session) -> Generator[TestClient, None, None]:
     app.dependency_overrides[get_db] = lambda: db_session
+    app.dependency_overrides[get_embedding_provider] = HashingEmbeddingProvider
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

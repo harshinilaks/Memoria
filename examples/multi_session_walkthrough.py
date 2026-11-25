@@ -51,6 +51,16 @@ def session_two(client: httpx.Client, hypothesis_id: str) -> None:
     for memory in response.json()["memories"]:
         print(f"  [{memory['memory_type']}] {memory['content']}")
 
+    print("Session 2: asking a question in different words (semantic search)")
+    response = client.post(
+        "/api/v1/memories/search",
+        json={"query": "why might refunds fail?", "repository_id": REPOSITORY, "top_k": 1},
+    )
+    response.raise_for_status()
+    for result in response.json()["results"]:
+        memory = result["memory"]
+        print(f"  {result['score']:.2f} [{memory['memory_type']}] {memory['content']}")
+
     print("Session 2: the hypothesis was confirmed, recording that in its metadata")
     client.patch(
         f"/api/v1/memories/{hypothesis_id}",

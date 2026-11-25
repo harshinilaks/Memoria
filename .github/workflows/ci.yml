@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_DB: memoria
           POSTGRES_USER: memoria
@@ -31,3 +31,4 @@ jobs:
       - run: uv sync --locked
       - run: uv run alembic upgrade head
       - run: uv run pytest
+      - run: uv run pytest -m fastembed

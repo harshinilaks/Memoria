@@ -70,3 +70,27 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     database: str
+
+
+class MemorySearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(..., min_length=1, max_length=2000)
+    top_k: int = Field(10, ge=1, le=50)
+    min_score: Optional[float] = Field(
+        None, ge=-1.0, le=1.0, description="Minimum cosine similarity to include a result."
+    )
+    repository_id: Optional[str] = None
+    session_id: Optional[str] = None
+    memory_type: Optional[MemoryType] = None
+    status: MemoryStatus = MemoryStatus.ACTIVE
+
+
+class MemorySearchResult(BaseModel):
+    memory: MemoryResponse
+    score: float
+
+
+class MemorySearchResponse(BaseModel):
+    results: list[MemorySearchResult]
+    model: str

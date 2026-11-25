@@ -14,8 +14,7 @@ class MemoryRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def create(self, namespace: str, **fields: Any) -> Memory:
-        memory = Memory(namespace=namespace, **fields)
+    def add(self, memory: Memory) -> Memory:
         self.db.add(memory)
         self.db.commit()
         self.db.refresh(memory)

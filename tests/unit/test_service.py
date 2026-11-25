@@ -7,6 +7,7 @@ from memoria.api.schemas import MemoryCreate, MemoryUpdate
 from memoria.core.exceptions import MemoryNotFoundError
 from memoria.database.models import Memory, MemoryStatus
 from memoria.memory.service import MemoryService
+from memoria.retrieval.embeddings import HashingEmbeddingProvider
 
 
 class InMemoryRepository:
@@ -15,8 +16,9 @@ class InMemoryRepository:
     def __init__(self) -> None:
         self.rows: dict[str, Memory] = {}
 
-    def create(self, namespace: str, **fields: Any) -> Memory:
-        memory = Memory(id=str(uuid4()), namespace=namespace, status=MemoryStatus.ACTIVE, **fields)
+    def add(self, memory: Memory) -> Memory:
+        memory.id = str(uuid4())
+        memory.status = MemoryStatus.ACTIVE
         self.rows[memory.id] = memory
         return memory
 
@@ -42,6 +44,7 @@ class InMemoryRepository:
 def service() -> MemoryService:
     svc = MemoryService.__new__(MemoryService)
     svc.repository = InMemoryRepository()  # type: ignore[assignment]
+    svc.embedder = HashingEmbeddingProvider()
     return svc
 
 
@@ -81,3 +84,25 @@ def test_archived_memory_is_hidden(service: MemoryService) -> None:
     assert service.archive(memory.id, "ns").status is MemoryStatus.ARCHIVED
     with pytest.raises(MemoryNotFoundError):
         service.archive(memory.id, "ns")
+
+
+def test_create_stores_embedding_of_content(service: MemoryService) -> None:
+    memory = new_memory(service)
+    assert memory.embedding is not None
+    assert memory.embedding.model == service.embedder.model_name
+    assert memory.embedding.embedding == service.embedder.embed_documents(["c"])[0]
+
+
+def test_content_update_reembeds(service: MemoryService) -> None:
+    memory = new_memory(service)
+    embedding = memory.embedding
+    service.update(memory.id, "ns", MemoryUpdate(content="new content"))
+    assert memory.embedding is embedding
+    assert embedding.embedding == service.embedder.embed_documents(["new content"])[0]
+
+
+def test_metadata_update_keeps_embedding(service: MemoryService) -> None:
+    memory = new_memory(service)
+    before = list(memory.embedding.embedding)
+    service.update(memory.id, "ns", MemoryUpdate(metadata={"x": 2}))
+    assert memory.embedding.embedding == before

@@ -1,6 +1,6 @@
 # Memoria
 
-Memoria is a persistent memory infrastructure service for AI agents. This Phase 1 implementation provides a FastAPI service backed by PostgreSQL, with SQLAlchemy models, Alembic migrations, and a repository/service layer for memory CRUD with namespace isolation.
+Memoria is a persistent memory infrastructure service for AI agents. It provides a FastAPI service backed by PostgreSQL with namespace-isolated memory CRUD (Phase 1) and semantic search over memories using local embeddings and pgvector (Phase 2).
 
 ## Architecture
 
@@ -9,10 +9,11 @@ Memoria is a persistent memory infrastructure service for AI agents. This Phase 
 | API | `memoria.api` | Routes, request/response schemas, caller identity (`dependencies.get_namespace`) |
 | Service | `memoria.memory.service` | Lifecycle rules (archive policy, access tracking), domain errors, logging |
 | Repository | `memoria.memory.repository` | Namespace-scoped SQL queries |
-| Data model | `memoria.database.models` | `Memory` entity, enums, indexes, constraints |
+| Retrieval | `memoria.retrieval` | `EmbeddingProvider` interface and providers, semantic search (`MemoryRetriever`), backfill |
+| Data model | `memoria.database.models` | `Memory` and `MemoryEmbedding` entities, enums, indexes, constraints |
 | Core | `memoria.core` | Settings, domain exceptions, JSON logging |
 
-`retrieval/` and `integrations/` are placeholders for later phases.
+`integrations/` is a placeholder for later phases.
 
 ### Design decisions
 
@@ -23,13 +24,21 @@ Memoria is a persistent memory infrastructure service for AI agents. This Phase 
 - **Hypotheses vs facts.** `memory_type` distinguishes verified `fact`s from agent-generated `hypothesis`es so consumers can avoid treating unverified information as authoritative.
 - **Migrations only.** The app never creates tables; schema changes go through Alembic.
 
+### Semantic retrieval
+
+- **Embedding provider.** The default is [fastembed](https://github.com/qdrant/fastembed) with `BAAI/bge-small-en-v1.5` (384 dimensions, ONNX on CPU, no PyTorch). The model is downloaded on first use (about 130 MB); set `EMBEDDING_CACHE_DIR` to keep it somewhere persistent. Providers implement `EmbeddingProvider` (`embed_documents`, `embed_query`), so others can be added without touching the database or API. `EMBEDDING_PROVIDER=hash` selects a deterministic word-hashing embedder used by the tests; it matches shared words, not meaning.
+- **Storage.** Embeddings live in `memory_embeddings` (one row per memory, `vector(384)`, HNSW cosine index), separate from `memories`. Each row records the model that produced it; search only compares vectors from the configured model. A model with a different dimension needs a migration (startup fails with an explicit error otherwise).
+- **When embedding happens.** Synchronously on create and when content changes, in the same transaction as the write, so a stored memory is always searchable. If embedding fails, the write fails.
+- **Search.** `POST /api/v1/memories/search` ranks memories in the caller's namespace by cosine similarity (`score` = 1 − cosine distance). It returns only `active` memories unless `status` is given, supports `repository_id`, `session_id`, `memory_type`, `top_k` (1–50, default 10) and `min_score`, and sets `last_accessed_at` on returned memories. pgvector iterative index scans are enabled so selective filters still return matches.
+- **Backfill.** After switching models, or for memories written before Phase 2, run `uv run python -m memoria.retrieval.backfill` to embed every memory that is missing an embedding or has one from a different model.
+
 ## Local development
 
 Requires Python 3.11+, [uv](https://docs.astral.sh/uv/) and Docker.
 
 ```bash
 cp .env.example .env              # 1. configuration
-docker compose up -d postgres     # 2. PostgreSQL 16
+docker compose up -d postgres     # 2. PostgreSQL 16 with pgvector
 uv sync                           # 3. dependencies (creates .venv)
 uv run alembic upgrade head       # 4. schema
 uv run uvicorn memoria.main:app --reload --port 8000   # 5. API
@@ -72,6 +81,11 @@ curl -X DELETE http://localhost:8000/api/v1/memories/<memory_id>
 # List archived memories
 curl "http://localhost:8000/api/v1/memories?status=archived"
 
+# Semantic search (filters: repository_id, session_id, memory_type, status; top_k; min_score)
+curl -X POST http://localhost:8000/api/v1/memories/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "how do users log in?", "repository_id": "memoria", "top_k": 5}'
+
 # Health (includes a database check; returns 503 if the database is unreachable)
 curl http://localhost:8000/health
 ```
@@ -94,4 +108,10 @@ uv run pytest
 ```bash
 export TEST_DATABASE_URL=postgresql+psycopg://memoria:memoria_password@localhost:5432/memoria_test
 uv run pytest
+```
+
+- Integration tests use the deterministic `hash` embedder. One test (marker `fastembed`) downloads and runs the real model; it is excluded by default:
+
+```bash
+uv run pytest -m fastembed
 ```

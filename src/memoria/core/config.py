@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -14,6 +16,11 @@ class Settings(BaseSettings):
 
     # Phase 1 development identity. Not a security boundary.
     dev_namespace: str = Field(default="development", min_length=1, max_length=255)
+
+    # "hash" is a deterministic, non-semantic embedder for tests and offline development.
+    embedding_provider: Literal["fastembed", "hash"] = "fastembed"
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    embedding_cache_dir: str | None = None
 
     log_level: str = "INFO"
 
