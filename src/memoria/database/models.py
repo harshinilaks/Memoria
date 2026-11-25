@@ -3,17 +3,13 @@ from enum import Enum as PyEnum
 from typing import Any, Optional
 from uuid import uuid4
 
-from sqlalchemy import (
-    JSON,
-    CheckConstraint,
-    DateTime,
-    Enum,
-    ForeignKey,
-    Index,
-    String,
-    Text,
-)
+from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Index, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class Base(DeclarativeBase):
@@ -36,28 +32,19 @@ class MemoryStatus(str, PyEnum):
 class Memory(Base):
     __tablename__ = "memories"
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid4())
-    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     agent_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     namespace: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    repository_id: Mapped[Optional[str]] = mapped_column(
-        String(255), nullable=True, index=True
-    )
+    repository_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     session_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    memory_type: Mapped[MemoryType] = mapped_column(
-        Enum(MemoryType), nullable=False, index=True
-    )
+    memory_type: Mapped[MemoryType] = mapped_column(Enum(MemoryType), nullable=False, index=True)
     source: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+        DateTime(timezone=True), nullable=False, default=utc_now
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
     )
     last_accessed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -69,16 +56,18 @@ class Memory(Base):
     superseded_by_id: Mapped[Optional[str]] = mapped_column(
         String(36), ForeignKey("memories.id"), nullable=True
     )
-    metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    # `metadata` is reserved on declarative classes, so the attribute is `metadata_`
+    # while the column keeps the name `metadata`.
+    metadata_: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
 
     superseded_by: Mapped[Optional["Memory"]] = relationship(
         "Memory", remote_side=[id], backref="supersedes"
     )
 
     __table_args__ = (
-        CheckConstraint(
-            "id != superseded_by_id", name="check_no_self_supersession"
-        ),
+        CheckConstraint("id != superseded_by_id", name="check_no_self_supersession"),
         Index("idx_namespace_status", "namespace", "status"),
         Index("idx_repository_session", "repository_id", "session_id"),
         Index("idx_agent_session", "agent_id", "session_id"),

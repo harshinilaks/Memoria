@@ -1,35 +1,47 @@
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
-from memoria.database.models import MemoryType, MemoryStatus
+from memoria.database.models import MemoryStatus, MemoryType
 
 
-class MemoryBase(BaseModel):
+class MemoryCreate(BaseModel):
+    """Request body for creating a memory. The namespace comes from the caller identity."""
+
+    model_config = ConfigDict(extra="forbid")
+
     content: str = Field(..., min_length=1, max_length=10000)
     memory_type: MemoryType
     agent_id: str = Field(..., min_length=1, max_length=255)
-    namespace: str = Field(..., min_length=1, max_length=255)
     session_id: str = Field(..., min_length=1, max_length=255)
-    repository_id: Optional[str] = Field(None, max_length=255)
+    repository_id: Optional[str] = Field(None, min_length=1, max_length=255)
     source: Optional[str] = Field(None, max_length=500)
     importance_score: Optional[float] = Field(None, ge=0.0, le=1.0)
-    metadata: dict = Field(default_factory=dict)
-
-
-class MemoryCreate(MemoryBase):
-    pass
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class MemoryUpdate(BaseModel):
+    """Fields a client may change. Omitted fields are left untouched."""
+
+    model_config = ConfigDict(extra="forbid")
+
     content: Optional[str] = Field(None, min_length=1, max_length=10000)
     importance_score: Optional[float] = Field(None, ge=0.0, le=1.0)
-    metadata: Optional[dict] = None
+    metadata: Optional[dict[str, Any]] = None
+
+    @field_validator("content", "metadata")
+    @classmethod
+    def reject_explicit_null(cls, value: Any) -> Any:
+        if value is None:
+            raise ValueError("may be omitted but not set to null")
+        return value
 
 
 class MemoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     agent_id: str
     namespace: str
@@ -44,10 +56,7 @@ class MemoryResponse(BaseModel):
     importance_score: Optional[float]
     status: MemoryStatus
     superseded_by_id: Optional[UUID]
-    metadata: dict
-
-    class Config:
-        from_attributes = True
+    metadata: dict[str, Any] = Field(validation_alias=AliasChoices("metadata_", "metadata"))
 
 
 class MemoryListResponse(BaseModel):
@@ -60,3 +69,4 @@ class MemoryListResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     version: str
+    database: str
