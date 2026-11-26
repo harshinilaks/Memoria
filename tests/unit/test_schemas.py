@@ -71,6 +71,7 @@ def test_response_reads_metadata_attribute() -> None:
         importance_score = None
         status = "active"
         superseded_by_id = None
+        reinforcement_count = 0
         metadata_ = {"k": "v"}
 
     assert MemoryResponse.model_validate(Row()).model_dump()["metadata"] == {"k": "v"}

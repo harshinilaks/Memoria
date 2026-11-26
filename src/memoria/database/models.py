@@ -59,8 +59,10 @@ class Memory(Base):
         Enum(MemoryStatus), nullable=False, default=MemoryStatus.ACTIVE, index=True
     )
     superseded_by_id: Mapped[Optional[str]] = mapped_column(
-        String(36), ForeignKey("memories.id"), nullable=True
+        String(36), ForeignKey("memories.id"), nullable=True, index=True
     )
+    # Times the same knowledge was stored again and merged into this memory.
+    reinforcement_count: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
     # `metadata` is reserved on declarative classes, so the attribute is `metadata_`
     # while the column keeps the name `metadata`.
     metadata_: Mapped[dict[str, Any]] = mapped_column(

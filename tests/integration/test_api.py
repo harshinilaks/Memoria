@@ -201,5 +201,5 @@ def test_health(client: TestClient) -> None:
 
 
 def test_ids_are_unique(client: TestClient) -> None:
-    ids = {create(client, session_id=str(uuid4()))["id"] for _ in range(3)}
+    ids = {create(client, session_id=str(uuid4()), deduplicate=False)["id"] for _ in range(3)}
     assert len(ids) == 3

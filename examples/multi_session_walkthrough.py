@@ -61,11 +61,20 @@ def session_two(client: httpx.Client, hypothesis_id: str) -> None:
         memory = result["memory"]
         print(f"  {result['score']:.2f} [{memory['memory_type']}] {memory['content']}")
 
-    print("Session 2: the hypothesis was confirmed, recording that in its metadata")
-    client.patch(
-        f"/api/v1/memories/{hypothesis_id}",
-        json={"metadata": {"confirmed_in": "session-2"}, "importance_score": 0.9},
-    ).raise_for_status()
+    print("Session 2: the hypothesis was confirmed, superseding it with a fact")
+    response = client.post(
+        f"/api/v1/memories/{hypothesis_id}/supersede",
+        json={
+            "agent_id": "example-agent",
+            "session_id": "session-2",
+            "content": "Refunds fail because the ledger call times out after 5 seconds.",
+            "memory_type": "fact",
+            "importance_score": 0.9,
+        },
+    )
+    response.raise_for_status()
+    replacement = response.json()["replacement"]
+    print(f"  {hypothesis_id} is now superseded by {replacement['id']}")
 
 
 if __name__ == "__main__":

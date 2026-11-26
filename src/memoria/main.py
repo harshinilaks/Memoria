@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from memoria.api.routes import router as memories_router
 from memoria.api.schemas import HealthResponse
 from memoria.core.config import settings
-from memoria.core.exceptions import MemoryNotFoundError
+from memoria.core.exceptions import MemoryNotFoundError, MemoryStateError
 from memoria.core.logging import configure_logging
 from memoria.database.session import get_db
 
@@ -49,6 +49,11 @@ async def log_requests(
 @app.exception_handler(MemoryNotFoundError)
 async def memory_not_found_handler(request: Request, exc: MemoryNotFoundError) -> JSONResponse:
     return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+
+@app.exception_handler(MemoryStateError)
+async def memory_state_handler(request: Request, exc: MemoryStateError) -> JSONResponse:
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
 @app.get("/health", response_model=HealthResponse)

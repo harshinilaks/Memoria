@@ -55,13 +55,13 @@ def test_search_ranks_most_similar_first(client: TestClient) -> None:
     assert 0 < scores[0] <= 1
 
 
-def test_top_k_and_min_score(client: TestClient) -> None:
+def test_top_k_and_min_similarity(client: TestClient) -> None:
     for i in range(5):
         create(client, f"deploy step {i} uses docker")
     create(client, "completely unrelated cooking recipe")
 
     assert len(search(client, "docker deploy", top_k=3)) == 3
-    filtered = search(client, "docker deploy", min_score=0.3)
+    filtered = search(client, "docker deploy", min_similarity=0.3)
     assert len(filtered) == 5
     assert all(r["score"] >= 0.3 for r in filtered)
 
@@ -108,7 +108,7 @@ def test_content_update_reembeds(client: TestClient) -> None:
     memory = create(client, "tests run with unittest")
     client.patch(f"/api/v1/memories/{memory['id']}", json={"content": "tests run with pytest"})
     assert [r["memory"]["id"] for r in search(client, "pytest")] == [memory["id"]]
-    assert search(client, "unittest", min_score=0.5) == []
+    assert search(client, "unittest", min_similarity=0.5) == []
 
 
 def test_search_updates_last_accessed(client: TestClient) -> None:

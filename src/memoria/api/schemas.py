@@ -20,6 +20,24 @@ class MemoryCreate(BaseModel):
     source: Optional[str] = Field(None, max_length=500)
     importance_score: Optional[float] = Field(None, ge=0.0, le=1.0)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    deduplicate: bool = Field(
+        True,
+        description="Merge into an existing near-duplicate active memory instead of storing a new one.",
+    )
+
+
+class MemorySupersede(BaseModel):
+    """Replacement for an active memory. Omitted type and importance are inherited."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    content: str = Field(..., min_length=1, max_length=10000)
+    agent_id: str = Field(..., min_length=1, max_length=255)
+    session_id: str = Field(..., min_length=1, max_length=255)
+    memory_type: Optional[MemoryType] = None
+    source: Optional[str] = Field(None, max_length=500)
+    importance_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class MemoryUpdate(BaseModel):
@@ -56,7 +74,58 @@ class MemoryResponse(BaseModel):
     importance_score: Optional[float]
     status: MemoryStatus
     superseded_by_id: Optional[UUID]
+    reinforcement_count: int
     metadata: dict[str, Any] = Field(validation_alias=AliasChoices("metadata_", "metadata"))
+
+
+class ConflictResponse(BaseModel):
+    memory: MemoryResponse
+    similarity: float
+    reasons: list[str]
+
+
+class MemoryCreateResponse(MemoryResponse):
+    """The stored memory. If `deduplicated`, this is the existing memory it was merged into."""
+
+    deduplicated: bool = False
+    conflicts: list[ConflictResponse] = Field(
+        default_factory=list,
+        description="Similar active memories that may contradict this one. Nothing is changed "
+        "automatically; supersede or archive the wrong one.",
+    )
+
+
+class SupersedeResponse(BaseModel):
+    superseded: MemoryResponse
+    replacement: MemoryResponse
+
+
+class MemoryHistoryResponse(BaseModel):
+    memory: MemoryResponse
+    newer: list[MemoryResponse] = Field(description="Replacements, oldest first, ending at the current version.")
+    older: list[MemoryResponse] = Field(description="Memories this one replaced, newest first.")
+
+
+class ConsolidateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    repository_id: Optional[str] = None
+    session_id: Optional[str] = None
+    memory_type: Optional[MemoryType] = None
+    similarity_threshold: Optional[float] = Field(
+        None, ge=0.5, le=1.0, description="Defaults to the configured deduplication threshold."
+    )
+    dry_run: bool = True
+
+
+class ConsolidationCluster(BaseModel):
+    canonical: MemoryResponse
+    merged: list[MemoryResponse]
+
+
+class ConsolidateResponse(BaseModel):
+    dry_run: bool
+    clusters: list[ConsolidationCluster]
 
 
 class MemoryListResponse(BaseModel):
@@ -77,7 +146,7 @@ class MemorySearchRequest(BaseModel):
 
     query: str = Field(..., min_length=1, max_length=2000)
     top_k: int = Field(10, ge=1, le=50)
-    min_score: Optional[float] = Field(
+    min_similarity: Optional[float] = Field(
         None, ge=-1.0, le=1.0, description="Minimum cosine similarity to include a result."
     )
     repository_id: Optional[str] = None
@@ -88,7 +157,10 @@ class MemorySearchRequest(BaseModel):
 
 class MemorySearchResult(BaseModel):
     memory: MemoryResponse
-    score: float
+    score: float = Field(description="Weighted blend of similarity, recency and importance; results are sorted by it.")
+    similarity: float
+    recency: float
+    importance: float
 
 
 class MemorySearchResponse(BaseModel):

@@ -6,6 +6,8 @@ import pytest
 from memoria.api.schemas import MemoryCreate, MemoryUpdate
 from memoria.core.exceptions import MemoryNotFoundError
 from memoria.database.models import Memory, MemoryStatus
+from memoria.lifecycle.contradictions import HeuristicContradictionDetector
+from memoria.lifecycle.policy import LifecyclePolicy
 from memoria.memory.service import MemoryService
 from memoria.retrieval.embeddings import HashingEmbeddingProvider
 
@@ -22,9 +24,9 @@ class InMemoryRepository:
         self.rows[memory.id] = memory
         return memory
 
-    def get_by_id(self, memory_id: str, namespace: str) -> Memory | None:
+    def get_by_id(self, memory_id: str, namespace: str, include_archived: bool = False) -> Memory | None:
         memory = self.rows.get(memory_id)
-        if memory and memory.namespace == namespace and memory.status != MemoryStatus.ARCHIVED:
+        if memory and memory.namespace == namespace and (include_archived or memory.status != MemoryStatus.ARCHIVED):
             return memory
         return None
 
@@ -39,12 +41,17 @@ class InMemoryRepository:
     def touch(self, memory: Memory) -> Memory:
         return memory
 
+    def similar(self, *args: Any, **kwargs: Any) -> list[tuple[Memory, float]]:
+        return []
+
 
 @pytest.fixture()
 def service() -> MemoryService:
     svc = MemoryService.__new__(MemoryService)
     svc.repository = InMemoryRepository()  # type: ignore[assignment]
     svc.embedder = HashingEmbeddingProvider()
+    svc.policy = LifecyclePolicy()
+    svc.detector = HeuristicContradictionDetector()
     return svc
 
 
@@ -52,7 +59,7 @@ def new_memory(service: MemoryService, namespace: str = "ns") -> Memory:
     data = MemoryCreate(
         agent_id="a", session_id="s", content="c", memory_type="fact", metadata={"k": 1}
     )
-    return service.create(namespace, data)
+    return service.create(namespace, data).memory
 
 
 def test_create_assigns_namespace_and_metadata(service: MemoryService) -> None:

@@ -2,10 +2,12 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
-from memoria.database.models import Memory, MemoryEmbedding, MemoryStatus, MemoryType
+from memoria.database.models import Memory, MemoryStatus, MemoryType
+from memoria.lifecycle.policy import LifecyclePolicy
+from memoria.lifecycle.scoring import ScoreBreakdown, score
+from memoria.memory.repository import MemoryRepository
 from memoria.retrieval.embeddings import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
@@ -19,61 +21,58 @@ class SearchFilters:
     status: MemoryStatus = MemoryStatus.ACTIVE
 
 
-class MemoryRetriever:
-    """Semantic search over memories in one namespace, ranked by cosine similarity."""
+# Nearest neighbours fetched before re-ranking, so a recent or important memory can
+# outrank a slightly more similar one.
+CANDIDATE_MULTIPLIER = 4
+MIN_CANDIDATES = 40
+MAX_CANDIDATES = 200
 
-    def __init__(self, db: Session, embedder: EmbeddingProvider):
+
+class MemoryRetriever:
+    """Semantic search over memories in one namespace.
+
+    Fetches nearest neighbours by cosine similarity, then re-ranks them by a weighted blend
+    of similarity, recency (exponential decay since last change) and importance.
+    """
+
+    def __init__(self, db: Session, embedder: EmbeddingProvider, policy: LifecyclePolicy = LifecyclePolicy()):
         self.db = db
+        self.repository = MemoryRepository(db)
         self.embedder = embedder
+        self.policy = policy
 
     def search(
         self,
         namespace: str,
         query: str,
         top_k: int = 10,
-        min_score: float | None = None,
+        min_similarity: float | None = None,
         filters: SearchFilters = SearchFilters(),
-    ) -> list[tuple[Memory, float]]:
-        query_vector = self.embedder.embed_query(query)
-        distance = MemoryEmbedding.embedding.cosine_distance(query_vector)
-
-        stmt = (
-            select(Memory, (1 - distance).label("score"))
-            .join(MemoryEmbedding)
-            .where(
-                Memory.namespace == namespace,
-                Memory.status == filters.status,
-                MemoryEmbedding.model == self.embedder.model_name,
-            )
+    ) -> list[tuple[Memory, ScoreBreakdown]]:
+        candidates = self.repository.similar(
+            namespace,
+            self.embedder.embed_query(query),
+            self.embedder.model_name,
+            status=filters.status,
+            repository_id=filters.repository_id,
+            session_id=filters.session_id,
+            memory_type=filters.memory_type,
+            min_similarity=min_similarity,
+            limit=min(MAX_CANDIDATES, max(MIN_CANDIDATES, top_k * CANDIDATE_MULTIPLIER)),
         )
-        if filters.repository_id is not None:
-            stmt = stmt.where(Memory.repository_id == filters.repository_id)
-        if filters.session_id is not None:
-            stmt = stmt.where(Memory.session_id == filters.session_id)
-        if filters.memory_type is not None:
-            stmt = stmt.where(Memory.memory_type == filters.memory_type)
-        if min_score is not None:
-            stmt = stmt.where(distance <= 1 - min_score)
-        stmt = stmt.order_by(distance, Memory.id).limit(top_k)
+        now = datetime.now(timezone.utc)
+        ranked = sorted(
+            ((memory, score(memory, similarity, now, self.policy)) for memory, similarity in candidates),
+            key=lambda item: (-item[1].score, item[0].id),
+        )[:top_k]
 
-        # Without iterative scans, the HNSW index returns at most ef_search candidates
-        # before filters apply, so selective filters could silently drop matches.
-        self.db.execute(text("SET LOCAL hnsw.iterative_scan = strict_order"))
-        rows = self.db.execute(stmt).all()
-
-        if rows:
-            self.db.execute(
-                update(Memory)
-                .where(Memory.id.in_([memory.id for memory, _ in rows]))
-                .values(last_accessed_at=datetime.now(timezone.utc), updated_at=Memory.updated_at)
-                .execution_options(synchronize_session=False)
-            )
+        self.repository.touch_many([memory.id for memory, _ in ranked])
         self.db.commit()
-        for memory, _ in rows:
+        for memory, _ in ranked:
             self.db.refresh(memory)
 
         logger.info(
             "memories searched",
-            extra={"namespace": namespace, "top_k": top_k, "results": len(rows)},
+            extra={"namespace": namespace, "top_k": top_k, "candidates": len(candidates), "results": len(ranked)},
         )
-        return [(memory, float(score)) for memory, score in rows]
+        return ranked

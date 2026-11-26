@@ -7,3 +7,7 @@ class MemoryNotFoundError(MemoriaError):
         self.memory_id = memory_id
         self.namespace = namespace
         super().__init__(f"Memory with id {memory_id} not found in namespace '{namespace}'")
+
+
+class MemoryStateError(MemoriaError):
+    """The operation is not allowed in the memory's current status."""

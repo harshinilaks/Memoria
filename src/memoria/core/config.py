@@ -22,6 +22,17 @@ class Settings(BaseSettings):
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     embedding_cache_dir: str | None = None
 
+    # Lifecycle thresholds (cosine similarity), tuned for BAAI/bge-small-en-v1.5.
+    dedup_similarity_threshold: float = Field(default=0.92, ge=0.0, le=1.0)
+    conflict_similarity_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
+
+    # Search ranking: weighted blend of similarity, recency and importance.
+    ranking_similarity_weight: float = Field(default=0.70, ge=0.0)
+    ranking_recency_weight: float = Field(default=0.15, ge=0.0)
+    ranking_importance_weight: float = Field(default=0.15, ge=0.0)
+    recency_half_life_days: float = Field(default=30.0, gt=0.0)
+    reinforcement_importance_boost: float = Field(default=0.05, ge=0.0, le=1.0)
+
     log_level: str = "INFO"
 
 
